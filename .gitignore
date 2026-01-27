@@ -33,3 +33,4 @@ chroma_db/
 
 # Ignore docker-compose override
 *docker-compose.override.yml
+CHATBOT_ARCHITECTURE.md
