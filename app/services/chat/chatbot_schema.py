@@ -8,11 +8,11 @@ class HistoryItem(BaseModel):
     
 class chatbot_request(BaseModel):
     history: Optional[List[HistoryItem]] = []
-    user_id: str  # Fixed: should be a normal field, not Header
+    user_id: Header(str)
     message: str
-    session_id: Optional[str] = None  # For conversation tracking
-    metadata: Optional[Dict[str, Any]] = {}  # For extensibility
+    session_id: Optional[str] = None  
+    metadata: Optional[Dict[str, Any]] = {}  
     
 class chatbot_response(BaseModel):
     response: str
-    metadata: Optional[Dict[str, Any]] = {}  # For returning additional info
+    metadata: Optional[Dict[str, Any]] = {}
