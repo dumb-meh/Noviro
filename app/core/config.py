@@ -22,6 +22,11 @@ class Settings:
         # OpenAI Configuration
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         
+        # Abacus AI Configuration
+        self.ABACUS_API_KEY = os.getenv("ABACUS_API_KEY")
+        self.ABACUS_DEPLOYMENT_ID = os.getenv("ABACUS_DEPLOYMENT_ID")
+        self.ABACUS_CONVERSATION_TTL_DAYS = int(os.getenv("ABACUS_CONVERSATION_TTL_DAYS", "7"))
+        
         # Redis Configuration
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.REDIS_DB = int(os.getenv("REDIS_DB", "0"))
@@ -33,6 +38,7 @@ class Settings:
         
         # Application Configuration
         self.MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "15"))
+        self.FOLLOWUP_DETECTION_WINDOW = int(os.getenv("FOLLOWUP_DETECTION_WINDOW", "5"))
 
 
 # ======================== CHATBOT CONFIG ========================

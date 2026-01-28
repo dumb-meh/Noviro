@@ -10,7 +10,7 @@ from app.utils.knowledge.knowledge_route import router as knowledge_router
 load_dotenv()
 
 app = FastAPI(
-    title="AdrianaBrill AI Service",
+    title="Noviro AI Service",
     description="AI-powered e-commerce assistant with product suggestions and chat",
     version="1.0.0"
 )
@@ -33,10 +33,7 @@ async def root():
     return {
         "message": "Welcome to Noviro AI Service",
         "endpoints": {
-            "ai_suggestions": "/api/ai_suggestions",
-            "chat": "/api/chat",
-            "knowledge": "/api/knowledge/products",
-            "docs": "/docs"
+            
         }
     }
 
