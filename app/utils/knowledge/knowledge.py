@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import uuid
 import json
-from app.vectordb.config import vector_db
+from app.vectordb.manager import vector_db
 from .knowledge_schema import ProductKnowledge
 
 class KnowledgeManager:

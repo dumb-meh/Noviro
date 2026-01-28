@@ -1,22 +1,14 @@
 """
-ChromaDB Vector Database Configuration
+ChromaDB Vector Database Manager
 
-Sets up four separate ChromaDB collections for:
-- Products
-- Services
-- Consultations
-- Specialists
-
-Each collection uses OpenAI embeddings for semantic search.
+Manages ChromaDB collections for the e-commerce platform.
+Imports configuration from app.core.config for centralized settings.
 """
 
-import os
 import chromadb
-from chromadb.config import Settings
+from chromadb.config import Settings as ChromaSettings
 from chromadb.utils import embedding_functions
-from dotenv import load_dotenv
-
-load_dotenv()
+from app.core.config import settings
 
 
 class VectorDBManager:
@@ -25,18 +17,17 @@ class VectorDBManager:
     def __init__(self):
         # Initialize ChromaDB client with persistent storage
         self.client = chromadb.PersistentClient(
-            path="./chroma_db",
-            settings=Settings(
+            path=settings.CHROMA_DB_PATH,
+            settings=ChromaSettings(
                 anonymized_telemetry=False,
                 allow_reset=True
             )
         )
         
         # Initialize OpenAI embedding function
-        openai_api_key = os.getenv("OPENAI_API_KEY")
         self.embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=openai_api_key,
-            model_name="text-embedding-3-small"  # Cost-effective, 1536 dimensions
+            api_key=settings.OPENAI_API_KEY,
+            model_name=settings.CHROMA_EMBEDDING_MODEL
         )
         
         # Initialize collections
@@ -89,7 +80,7 @@ class VectorDBManager:
         return self.specialists_collection
     
     def reset_all_collections(self):
-        """Reset all collections (use with caution!)"""
+        """Reset all collections (use with caution - for development only!)"""
         self.client.delete_collection("products_index")
         self.client.delete_collection("services_index")
         self.client.delete_collection("consultations_index")

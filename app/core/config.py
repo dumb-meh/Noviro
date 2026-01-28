@@ -1,6 +1,8 @@
 """
-Configuration settings for the LangGraph E-commerce Chatbot.
-This file contains all configurable parameters for the chatbot agent.
+Application Configuration
+
+Centralized configuration following 12-factor app principles.
+All environment variables and settings belong here.
 """
 
 import os
@@ -11,15 +13,39 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# ======================== SETTINGS ========================
+
+class Settings:
+    """Application-wide settings from environment variables"""
+    
+    def __init__(self):
+        # OpenAI Configuration
+        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+        
+        # Redis Configuration
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+        self.REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+        self.CACHE_TTL_HOURS = int(os.getenv("CACHE_TTL_HOURS", "24"))
+        
+        # ChromaDB Configuration
+        self.CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+        self.CHROMA_EMBEDDING_MODEL = os.getenv("CHROMA_EMBEDDING_MODEL", "text-embedding-3-small")
+        
+        # Application Configuration
+        self.MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "15"))
+
+
+# ======================== CHATBOT CONFIG ========================
+
 class ModelConfig(BaseModel):
-    """OpenAI model configuration"""
+    """OpenAI model configuration for chatbot"""
     model_name: str = "gpt-4"
     temperature: float = 0.7
     max_tokens: int = 1000
 
 
 class GuardrailConfig(BaseModel):
-    """Guardrail system configuration"""
+    """Guardrail system configuration for e-commerce filtering"""
     enabled: bool = True
     temperature: float = 0.3
     
@@ -54,54 +80,8 @@ I can assist you with:
 How can I help you with your shopping today?"""
 
 
-class VectorDBConfig(BaseModel):
-    """Vector Database configuration placeholders"""
-    # These will be populated when connecting actual vector databases
-    products_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "products_catalog",
-        "description": "Main product catalog with names, descriptions, categories"
-    }
-    
-    product_specs_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "product_specifications",
-        "description": "Detailed technical specifications and features"
-    }
-    
-    reviews_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "customer_reviews",
-        "description": "Customer reviews, ratings, and feedback"
-    }
-    
-    inventory_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "inventory_stock",
-        "description": "Real-time stock availability and warehouse data"
-    }
-    
-    pricing_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "pricing_promotions",
-        "description": "Current prices, discounts, and promotional offers"
-    }
-    
-    shipping_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "shipping_info",
-        "description": "Shipping options, delivery times, and tracking"
-    }
-    
-    support_db: Dict[str, Any] = {
-        "enabled": True,
-        "index_name": "support_docs",
-        "description": "FAQs, policies, and customer support documentation"
-    }
-
-
 class ResponseConfig(BaseModel):
-    """Response generation configuration"""
+    """Response generation configuration for chatbot"""
     system_prompt: str = """You are a helpful e-commerce assistant. 
 Your role is to provide accurate, friendly, and helpful responses to customer queries.
 
@@ -126,29 +106,15 @@ Provide a helpful response:"""
 
 
 class ChatbotConfig:
-    """Main configuration class for the chatbot"""
+    """Chatbot configuration aggregator"""
     
     def __init__(self):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.model_config = ModelConfig()
         self.guardrail_config = GuardrailConfig()
-        self.vector_db_config = VectorDBConfig()
         self.response_config = ResponseConfig()
-    
-    def get_enabled_vector_dbs(self) -> list:
-        """Get list of enabled vector databases"""
-        dbs = []
-        for attr_name in dir(self.vector_db_config):
-            if attr_name.endswith('_db') and not attr_name.startswith('_'):
-                db_config = getattr(self.vector_db_config, attr_name)
-                if isinstance(db_config, dict) and db_config.get('enabled', False):
-                    dbs.append({
-                        'name': attr_name,
-                        'index': db_config.get('index_name'),
-                        'description': db_config.get('description')
-                    })
-        return dbs
 
 
-# Global config instance
+# ======================== GLOBAL INSTANCES ========================
+
+settings = Settings()
 chatbot_config = ChatbotConfig()

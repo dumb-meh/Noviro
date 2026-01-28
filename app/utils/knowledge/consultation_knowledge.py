@@ -6,7 +6,7 @@ Includes semantic search, add, update, and delete operations.
 """
 
 from typing import List, Dict, Optional, Any
-from app.vectordb.config import vector_db_manager
+from app.vectordb.manager import vector_db_manager
 from .knowledge_schema import ConsultationKnowledge, SearchResult, OperationResponse
 
 
