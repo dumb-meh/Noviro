@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: adrianabrill_AI_app
+    container_name: Noviro_AI_app
     ports:
       - "8085:8085"
     env_file:
@@ -11,7 +11,7 @@ services:
       - ./chroma_db:/app/chroma_db  
     restart: unless-stopped
     networks:
-      - adrianabrill_AI_network
+      - Noviro_AI_network
     depends_on:
       - redis
     healthcheck:
@@ -23,14 +23,14 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: adrianabrill_AI_redis
+    container_name: Noviro_AI_redis
     ports:
       - "6379:6379"
     restart: unless-stopped
     networks:
-      - adrianabrill_AI_network
+      - Noviro_AI_network
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
 
 networks:
-  adrianabrill_AI_network: 
+  Noviro_AI_network: 
     driver: bridge

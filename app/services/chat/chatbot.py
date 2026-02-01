@@ -313,16 +313,16 @@ Please provide a helpful response based on the context."""
         return "retrieve"  # New query, search DBs
     
     def chat(self, request: chatbot_request) -> chatbot_response:
-        """Main chat interface"""
-        # Convert history to messages
-        messages = []
-        for item in request.history or []:
-            messages.append(HumanMessage(content=item.message))
-            messages.append(AIMessage(content=item.response))
+        """
+        Main chat interface
         
-        # Initialize state
+        History is managed server-side:
+        - Redis provides recent history for guardrail/follow-up detection
+        - Abacus AI maintains full conversation via conversation_id
+        """
+        # Initialize state (no history from request needed)
         initial_state: ChatbotState = {
-            "messages": messages,
+            "messages": [],  # Not used since Abacus handles history
             "user_query": request.message,
             "user_id": request.user_id,
             "conversation_id": None,
@@ -344,14 +344,9 @@ Please provide a helpful response based on the context."""
             new_response=final_state['final_response']
         )
         
-        # Return response
+        # Return response (metadata removed from schema)
         return chatbot_response(
-            response=final_state['final_response'],
-            metadata={
-                "is_followup": final_state.get('is_followup', False),
-                "skip_retrieval": final_state.get('skip_retrieval', False),
-                **final_state.get('metadata', {})
-            }
+            response=final_state['final_response']
         )
 
 
