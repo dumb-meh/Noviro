@@ -24,7 +24,6 @@ class Settings:
         
         # Abacus AI Configuration
         self.ABACUS_API_KEY = os.getenv("ABACUS_API_KEY")
-        self.ABACUS_DEPLOYMENT_ID = os.getenv("ABACUS_DEPLOYMENT_ID")
         self.ABACUS_CONVERSATION_TTL_DAYS = int(os.getenv("ABACUS_CONVERSATION_TTL_DAYS", "7"))
         
         # Redis Configuration
@@ -45,7 +44,7 @@ class Settings:
 
 class ModelConfig(BaseModel):
     """OpenAI model configuration for chatbot"""
-    model_name: str = "gpt-4"
+    model_name: str = "gpt-3.5-turbo"
     temperature: float = 0.7
     max_tokens: int = 1000
 

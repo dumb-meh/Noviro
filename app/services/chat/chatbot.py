@@ -1,12 +1,13 @@
 import json
 import requests
 import time
+import logging
 from typing import TypedDict, Annotated, Sequence, Dict, Any, List, Optional
 from operator import add
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
+from abacusai import ApiClient
 
 from app.core.config import chatbot_config, settings
 from app.utils.cache_manager import cache_manager
@@ -16,28 +17,32 @@ from app.utils.knowledge.consultation_knowledge import consultation_knowledge_ma
 from app.utils.knowledge.specialist_knowledge import specialist_knowledge_manager
 from .chatbot_schema import chatbot_request, chatbot_response, HistoryItem
 
+# Configure logger
+logger = logging.getLogger(__name__)
 
-class AbacusAIClient:
-    """Simple Abacus AI client for LLM calls"""
+
+class OpenAIClient:
+    """Simple OpenAI client for guardrail checks"""
     
     def __init__(self):
-        self.api_key = settings.ABACUS_API_KEY
-        self.deployment_id = settings.ABACUS_DEPLOYMENT_ID
-        self.base_url = "https://api.abacus.ai/api"
+        self.api_key = settings.OPENAI_API_KEY
+        self.base_url = "https://api.openai.com/v1/chat/completions"
     
-    def get_conversation_response(self, message: str, conversation_id: Optional[str] = None) -> Dict:
-        """Send message to Abacus AI with conversation context"""
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.3) -> str:
+        """Send chat completion request to OpenAI"""
         try:
-            headers = {"apiKey": self.api_key}
-            data = {
-                "deploymentId": self.deployment_id,
-                "message": message
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
             }
-            if conversation_id:
-                data["conversationId"] = conversation_id
+            data = {
+                "model": "gpt-3.5-turbo",
+                "messages": messages,
+                "temperature": temperature
+            }
             
             response = requests.post(
-                f"{self.base_url}/getConversationResponse",
+                self.base_url,
                 headers=headers,
                 json=data,
                 timeout=30
@@ -45,12 +50,75 @@ class AbacusAIClient:
             response.raise_for_status()
             result = response.json()
             
+            return result["choices"][0]["message"]["content"]
+        except Exception as e:
+            raise Exception(f"OpenAI API error: {str(e)}")
+
+
+class AbacusAIClient:
+    """Abacus AI client using official Python SDK"""
+    
+    def __init__(self):
+        self.api_key = settings.ABACUS_API_KEY
+        
+        # Validate credentials
+        if not self.api_key or self.api_key == "your-api-key":
+            logger.error("[ABACUS] Missing or invalid ABACUS_API_KEY")
+            self.client = None
+        else:
+            try:
+                self.client = ApiClient(self.api_key)
+                logger.info("[ABACUS] Successfully initialized Abacus.AI client")
+            except Exception as e:
+                logger.error(f"[ABACUS] Failed to initialize client: {str(e)}")
+                self.client = None
+    
+    def get_conversation_response(self, message: str, conversation_id: Optional[str] = None) -> Dict:
+        """
+        Send message to Abacus AI using evaluate_prompt (no deployment needed)
+        For conversation history, we'll manage it ourselves and include it in the prompt
+        """
+        try:
+            # Validate client
+            if not self.client:
+                logger.error("[ABACUS] Client not initialized - check API key")
+                return {"answer": "", "conversation_id": conversation_id, "success": False, "error": "Abacus client not initialized"}
+            
+            logger.info(f"[ABACUS] Message length: {len(message)} chars")
+            logger.info(f"[ABACUS] Using evaluate_prompt (no deployment required)")
+            
+            # Call Abacus AI using evaluate_prompt
+            # This method doesn't require a deployment ID
+            result = self.client.evaluate_prompt(
+                prompt=message
+            )
+            
+            logger.info(f"[ABACUS] Success - received response")
+            
+            # evaluate_prompt returns a simple response
+            answer = ""
+            if hasattr(result, 'content'):
+                answer = result.content
+            elif hasattr(result, 'response'):
+                answer = result.response
+            elif isinstance(result, str):
+                answer = result
+            else:
+                answer = str(result)
+            
+            logger.info(f"[ABACUS] Response length: {len(answer)} chars")
+            
+            # Since evaluate_prompt doesn't manage conversation IDs,
+            # we return the same conversation_id that was passed in
             return {
-                "answer": result.get("result", {}).get("answer", ""),
-                "conversation_id": result.get("result", {}).get("conversationId"),
+                "answer": answer,
+                "conversation_id": conversation_id,  # We manage this ourselves
                 "success": True
             }
+            
         except Exception as e:
+            logger.error(f"[ABACUS] Error calling evaluate_prompt: {str(e)}")
+            logger.error(f"[ABACUS] Error type: {type(e).__name__}")
             return {"answer": "", "conversation_id": conversation_id, "success": False, "error": str(e)}
 
 
@@ -111,11 +179,7 @@ class EcommerceChatbotAgent:
         self.config = chatbot_config
         
         # OpenAI for guardrails + follow-up detection
-        self.guardrail_llm = ChatOpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            model="gpt-3.5-turbo",
-            temperature=0.3
-        )
+        self.openai_client = OpenAIClient()
         
         # Abacus AI for responses
         self.abacus = AbacusAIClient()
@@ -159,10 +223,16 @@ class EcommerceChatbotAgent:
         Guardrail: Check e-commerce + detect follow-ups using OpenAI
         Single LLM call for both checks
         """
+        logger.info(f"[GUARDRAIL] Starting guardrail check for user: {state['user_id']}")
+        logger.info(f"[GUARDRAIL] User query: {state['user_query']}")
+        
         # Get recent history for context
         recent_history = self.cache.get_history(state['user_id'])
         if recent_history:
             recent_history = recent_history[-3:]  # Last 3 exchanges
+            logger.info(f"[GUARDRAIL] Found {len(recent_history)} history items")
+        else:
+            logger.info(f"[GUARDRAIL] No conversation history found")
         
         # Build context from history
         history_context = ""
@@ -190,19 +260,23 @@ Respond with ONLY a JSON object:
         
         try:
             messages = [
-                SystemMessage(content="You are a precise classifier. Always respond with valid JSON."),
-                HumanMessage(content=combined_prompt)
+                {"role": "system", "content": "You are a precise classifier. Always respond with valid JSON."},
+                {"role": "user", "content": combined_prompt}
             ]
             
-            response = self.guardrail_llm.invoke(messages)
-            result = json.loads(response.content)
+            response_content = self.openai_client.chat(messages)
+            result = json.loads(response_content)
             
             state["is_followup"] = result.get("is_followup", False)
             state["is_ecommerce_query"] = result.get("is_ecommerce", True)
             state["skip_retrieval"] = result.get("is_followup", False)  # Skip vector search for follow-ups
             
+            logger.info(f"[GUARDRAIL] Classification result: {result}")
+            logger.info(f"[GUARDRAIL] is_followup={state['is_followup']}, is_ecommerce={state['is_ecommerce_query']}, skip_retrieval={state['skip_retrieval']}")
+            
         except Exception as e:
             # On error, default to safe values
+            logger.error(f"[GUARDRAIL] Error during classification: {str(e)}")
             state["is_followup"] = False
             state["is_ecommerce_query"] = True
             state["skip_retrieval"] = False
@@ -212,41 +286,80 @@ Respond with ONLY a JSON object:
     def retrieve_knowledge_node(self, state: ChatbotState) -> ChatbotState:
         """Search vector DBs (products, services, consultations, specialists)"""
         query = state['user_query']
+        logger.info(f"[RETRIEVAL] Starting knowledge retrieval for query: {query}")
         
         try:
             # Products
-            products = product_knowledge_manager.search_products(query, n_results=3)
-            if products:
-                state['retrieved_contexts']['products'] = [
-                    f"{p.data.get('name')} - ${p.data.get('price')} - {p.data.get('description', '')[:100]}"
-                    for p in products
-                ]
+            logger.info(f"[RETRIEVAL] Searching products...")
+            try:
+                products = product_knowledge_manager.search_products(query, n_results=3)
+                if products:
+                    state['retrieved_contexts']['products'] = [
+                        f"{p.data.get('name')} - ${p.data.get('price')} - {p.data.get('description', '')[:100]}"
+                        for p in products
+                    ]
+                    logger.info(f"[RETRIEVAL] Found {len(products)} products")
+                else:
+                    logger.info(f"[RETRIEVAL] No products found")
+            except Exception as e:
+                logger.error(f"[RETRIEVAL] Error searching products: {str(e)}")
+                state['metadata']['product_error'] = str(e)
             
             # Services
-            services = service_knowledge_manager.search_services(query, n_results=3)
-            if services:
-                state['retrieved_contexts']['services'] = [
-                    f"{s.data.get('name')} - ${s.data.get('price')} - {s.data.get('description', '')[:100]}"
-                    for s in services
-                ]
+            logger.info(f"[RETRIEVAL] Searching services...")
+            try:
+                services = service_knowledge_manager.search_services(query, n_results=3)
+                if services:
+                    state['retrieved_contexts']['services'] = [
+                        f"{s.data.get('name')} - ${s.data.get('price')} - {s.data.get('description', '')[:100]}"
+                        for s in services
+                    ]
+                    logger.info(f"[RETRIEVAL] Found {len(services)} services")
+                else:
+                    logger.info(f"[RETRIEVAL] No services found")
+            except Exception as e:
+                logger.error(f"[RETRIEVAL] Error searching services: {str(e)}")
+                state['metadata']['service_error'] = str(e)
             
             # Consultations
-            consultations = consultation_knowledge_manager.search_consultations(query, n_results=2)
-            if consultations:
-                state['retrieved_contexts']['consultations'] = [
-                    f"{c.data.get('name')} - ${c.data.get('price')} ({c.data.get('duration')} min)"
-                    for c in consultations
-                ]
+            logger.info(f"[RETRIEVAL] Searching consultations...")
+            try:
+                consultations = consultation_knowledge_manager.search_consultations(query, n_results=2)
+                if consultations:
+                    state['retrieved_contexts']['consultations'] = [
+                        f"{c.data.get('name')} - ${c.data.get('price')} ({c.data.get('duration')} min)"
+                        for c in consultations
+                    ]
+                    logger.info(f"[RETRIEVAL] Found {len(consultations)} consultations")
+                else:
+                    logger.info(f"[RETRIEVAL] No consultations found")
+            except Exception as e:
+                logger.error(f"[RETRIEVAL] Error searching consultations: {str(e)}")
+                state['metadata']['consultation_error'] = str(e)
             
             # Specialists
-            specialists = specialist_knowledge_manager.search_specialists(query, n_results=2)
-            if specialists:
-                state['retrieved_contexts']['specialists'] = [
-                    f"{s.data.get('name')} - {s.data.get('experience')} (Rating: {s.data.get('rating')})"
-                    for s in specialists
-                ]
+            logger.info(f"[RETRIEVAL] Searching specialists...")
+            try:
+                specialists = specialist_knowledge_manager.search_specialists(query, n_results=2)
+                if specialists:
+                    state['retrieved_contexts']['specialists'] = [
+                        f"{s.data.get('name')} - {s.data.get('experience')} (Rating: {s.data.get('rating')})"
+                        for s in specialists
+                    ]
+                    logger.info(f"[RETRIEVAL] Found {len(specialists)} specialists")
+                else:
+                    logger.info(f"[RETRIEVAL] No specialists found")
+            except Exception as e:
+                logger.error(f"[RETRIEVAL] Error searching specialists: {str(e)}")
+                state['metadata']['specialist_error'] = str(e)
+            
+            # Summary
+            total_contexts = sum(len(v) for v in state['retrieved_contexts'].values())
+            logger.info(f"[RETRIEVAL] Completed. Total contexts retrieved: {total_contexts}")
+            logger.info(f"[RETRIEVAL] Retrieved contexts by type: {', '.join([f'{k}:{len(v)}' for k, v in state['retrieved_contexts'].items()])}")
         
         except Exception as e:
+            logger.error(f"[RETRIEVAL] Unexpected error in retrieval node: {str(e)}")
             state['metadata']['retrieval_error'] = str(e)
         
         return state
@@ -254,44 +367,69 @@ Respond with ONLY a JSON object:
     def generate_response_node(self, state: ChatbotState) -> ChatbotState:
         """
         Generate response using Abacus AI
-        Uses conversation_id for multi-turn context
+        Since evaluate_prompt doesn't manage conversation history automatically,
+        we need to include recent history in the prompt
         """
-        # Prepare context
+        logger.info(f"[GENERATION] Starting response generation")
+        
+        # Prepare context from vector search
         context_parts = []
         for source, contexts in state['retrieved_contexts'].items():
             if contexts:
                 context_parts.append(f"{source.upper()}:\n" + "\n".join(contexts))
         
         combined_context = "\n\n".join(context_parts) if context_parts else ""
+        logger.info(f"[GENERATION] Context length: {len(combined_context)} chars, {len(context_parts)} sources")
         
-        # Build message
+        # Get conversation history for context (since evaluate_prompt doesn't manage it)
+        conversation_history = ""
+        recent_history = self.cache.get_history(state['user_id'])
+        if recent_history and len(recent_history) > 0:
+            recent_history = recent_history[-3:]  # Last 3 exchanges
+            history_lines = []
+            for h in recent_history:
+                history_lines.append(f"User: {h.message}")
+                history_lines.append(f"Assistant: {h.response}")
+            conversation_history = "\n".join(history_lines)
+            logger.info(f"[GENERATION] Including {len(recent_history)} previous exchanges in context")
+        
+        # Build comprehensive prompt with history and context
+        prompt_parts = []
+        
+        if conversation_history:
+            prompt_parts.append(f"Previous conversation:\n{conversation_history}\n")
+        
         if combined_context:
-            full_message = f"""Context from our database:
-{combined_context}
-
-User Query: {state['user_query']}
-
-Please provide a helpful response based on the context."""
-        else:
-            full_message = state['user_query']
+            prompt_parts.append(f"Relevant information from our database:\n{combined_context}\n")
+        
+        prompt_parts.append(f"Current user query: {state['user_query']}\n")
+        prompt_parts.append("Please provide a helpful, friendly response based on the context and conversation history.")
+        
+        full_message = "\n".join(prompt_parts)
         
         try:
             # Get conversation_id
             conversation_id = self.session_mgr.get_conversation_id(state['user_id'])
+            logger.info(f"[GENERATION] Conversation ID: {conversation_id if conversation_id else 'None (new conversation)'}")
             
             # Call Abacus AI
+            logger.info(f"[GENERATION] Calling Abacus AI...")
             result = self.abacus.get_conversation_response(full_message, conversation_id)
             
             if result['success']:
                 state['final_response'] = result['answer']
+                logger.info(f"[GENERATION] Successfully generated response (length: {len(result['answer'])} chars)")
                 # Store new conversation_id
                 if result['conversation_id']:
                     self.session_mgr.set_conversation_id(state['user_id'], result['conversation_id'])
+                    logger.info(f"[GENERATION] Updated conversation ID: {result['conversation_id']}")
             else:
+                logger.error(f"[GENERATION] Abacus AI call failed: {result.get('error')}")
                 state['final_response'] = "I apologize, but I encountered an error. Please try again."
                 state['metadata']['error'] = result.get('error')
         
         except Exception as e:
+            logger.error(f"[GENERATION] Exception during response generation: {str(e)}")
             state['final_response'] = "I apologize, but I encountered an error. Please try again."
             state['metadata']['error'] = str(e)
         
@@ -305,11 +443,14 @@ Please provide a helpful response based on the context."""
     def route_after_guardrail(self, state: ChatbotState) -> str:
         """Route based on guardrail results"""
         if not state['is_ecommerce_query']:
+            logger.info(f"[ROUTING] Query rejected - not e-commerce related")
             return "reject"
         
         if state['skip_retrieval'] or state['is_followup']:
+            logger.info(f"[ROUTING] Routing to direct_response (followup: {state['is_followup']}, skip: {state['skip_retrieval']})")
             return "direct_response"  # Skip vector search for follow-ups
         
+        logger.info(f"[ROUTING] Routing to retrieve - performing vector search")
         return "retrieve"  # New query, search DBs
     
     def chat(self, request: chatbot_request) -> chatbot_response:
@@ -320,6 +461,11 @@ Please provide a helpful response based on the context."""
         - Redis provides recent history for guardrail/follow-up detection
         - Abacus AI maintains full conversation via conversation_id
         """
+        logger.info(f"\n{'='*80}")
+        logger.info(f"[CHAT] New chat request from user: {request.user_id}")
+        logger.info(f"[CHAT] Message: {request.message}")
+        logger.info(f"{'='*80}")
+        
         # Initialize state (no history from request needed)
         initial_state: ChatbotState = {
             "messages": [],  # Not used since Abacus handles history
@@ -335,7 +481,9 @@ Please provide a helpful response based on the context."""
         }
         
         # Execute graph
+        logger.info(f"[CHAT] Starting LangGraph execution...")
         final_state = self.graph.invoke(initial_state)
+        logger.info(f"[CHAT] LangGraph execution completed")
         
         # Update Redis history
         self.cache.update_history(
@@ -343,6 +491,12 @@ Please provide a helpful response based on the context."""
             new_message=request.message,
             new_response=final_state['final_response']
         )
+        
+        # Log final state
+        logger.info(f"[CHAT] Final response length: {len(final_state['final_response'])} chars")
+        if final_state['metadata']:
+            logger.warning(f"[CHAT] Metadata (errors): {final_state['metadata']}")
+        logger.info(f"{'='*80}\n")
         
         # Return response (metadata removed from schema)
         return chatbot_response(
