@@ -53,7 +53,6 @@ class ConsultationKnowledgeManager:
         
         parts.append(f"Price: ${consultation.price}")
         parts.append(f"Duration: {consultation.duration} minutes")
-        parts.append(f"Available: {'Yes' if consultation.availability else 'No'}")
         
         return " | ".join(parts)
     

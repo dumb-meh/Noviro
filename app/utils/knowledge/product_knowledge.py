@@ -55,7 +55,7 @@ class ProductKnowledgeManager:
         if product.discount > 0:
             parts.append(f"Discount: {product.discount}%")
         parts.append(f"Stock: {product.stock_quantity} units")
-        parts.append(f"Available: {'Yes' if product.availability else 'No'}")
+
         
         return " | ".join(parts)
     

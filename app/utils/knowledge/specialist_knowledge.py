@@ -55,7 +55,6 @@ class SpecialistKnowledgeManager:
         
         parts.append(f"Price: ${specialist.price}")
         parts.append(f"Duration: {specialist.duration} minutes")
-        parts.append(f"Available: {'Yes' if specialist.availability else 'No'}")
         
         return " | ".join(parts)
     

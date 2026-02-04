@@ -45,7 +45,6 @@ class ServiceKnowledge(BaseModel):
     start_time: Optional[datetime] = Field(None, description="Service start time")
     end_time: Optional[datetime] = Field(None, description="Service end time")
     service_type: Optional[str] = Field(None, description="Type of service")
-    availability: bool = Field(True, description="Service availability status")
     
 
 
@@ -67,7 +66,7 @@ class ConsultationKnowledge(BaseModel):
     consultation_time: Optional[datetime] = Field(None, description="Available consultation time")
     experience: Optional[str] = Field(None, description="Years of experience or description")
     type: Optional[str] = Field(None, description="Type of consultation")
-    availability: bool = Field(True, description="Consultation availability status")
+
     
 
 # SPECIALIST SCHEMA
@@ -88,7 +87,6 @@ class SpecialistKnowledge(BaseModel):
     specialist_time: Optional[datetime] = Field(None, description="Available times")
     experience: Optional[str] = Field(None, description="Years of experience")
     type: Optional[str] = Field(None, description="Type of specialist")
-    availability: bool = Field(True, description="Availability status")
     rating: float = Field(0.0, description="Average rating (0-5)")
 
 

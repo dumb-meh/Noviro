@@ -54,7 +54,6 @@ class ServiceKnowledgeManager:
         parts.append(f"Price: ${service.price}")
         parts.append(f"Duration: {service.duration} minutes")
         parts.append(f"Available slots: {service.total_slot}")
-        parts.append(f"Available: {'Yes' if service.availability else 'No'}")
         
         return " | ".join(parts)
     
