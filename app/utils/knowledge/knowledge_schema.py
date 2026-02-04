@@ -22,7 +22,6 @@ class ProductKnowledge(BaseModel):
     discount: float = Field(0.0, description="Discount percentage (0-100)")
     tags: List[str] = Field(default_factory=list, description="Product tags for search")
     about: Optional[str] = Field(None, description="Additional information about the product")
-    availability: bool = Field(True, description="Product availability status")
 
 
 
