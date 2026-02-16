@@ -159,6 +159,7 @@ class ChatbotState(TypedDict):
     user_query: str
     user_id: str
     conversation_id: Optional[str]
+    user_language: str
     is_ecommerce_query: bool
     is_followup: bool
     skip_retrieval: bool
@@ -243,7 +244,7 @@ class EcommerceChatbotAgent:
                 history_lines.append(f"Assistant: {h.response}")
             history_context = "\n".join(history_lines)
         
-        # Combined prompt for both checks
+        # Combined prompt for language detection, follow-up check, and e-commerce validation
         combined_prompt = f"""You are a classifier for an e-commerce chatbot. Analyze the user's query considering the conversation history.
 
 Conversation History:
@@ -251,12 +252,13 @@ Conversation History:
 
 Current User Query: {state['user_query']}
 
-Please answer TWO questions:
-1. Is this query a FOLLOW-UP question referencing the previous conversation? (e.g., "what about the price?", "show me more", "in blue")
-2. Is this query related to E-COMMERCE topics? (products, services, shopping, pricing, delivery, etc.)
+Please answer THREE questions:
+1. What LANGUAGE is the user's query written in? (e.g., "English", "Arabic", "Spanish", "French", etc.)
+2. Is this query a FOLLOW-UP question referencing the previous conversation? (e.g., "what about the price?", "show me more", "in blue")
+3. Is this query related to E-COMMERCE topics? (products, services, shopping, pricing, delivery, etc.)
 
 Respond with ONLY a JSON object:
-{{"is_followup": true/false, "is_ecommerce": true/false, "reason": "brief explanation"}}"""
+{{"language": "<language_name>", "is_followup": true/false, "is_ecommerce": true/false, "reason": "brief explanation"}}"""
         
         try:
             messages = [
@@ -267,16 +269,19 @@ Respond with ONLY a JSON object:
             response_content = self.openai_client.chat(messages)
             result = json.loads(response_content)
             
+            state["user_language"] = result.get("language", "English")
             state["is_followup"] = result.get("is_followup", False)
             state["is_ecommerce_query"] = result.get("is_ecommerce", True)
             state["skip_retrieval"] = result.get("is_followup", False)  # Skip vector search for follow-ups
             
             logger.info(f"[GUARDRAIL] Classification result: {result}")
+            logger.info(f"[GUARDRAIL] Detected language: {state['user_language']}")
             logger.info(f"[GUARDRAIL] is_followup={state['is_followup']}, is_ecommerce={state['is_ecommerce_query']}, skip_retrieval={state['skip_retrieval']}")
             
         except Exception as e:
             # On error, default to safe values
             logger.error(f"[GUARDRAIL] Error during classification: {str(e)}")
+            state["user_language"] = "English"  # Default to English on error
             state["is_followup"] = False
             state["is_ecommerce_query"] = True
             state["skip_retrieval"] = False
@@ -403,9 +408,12 @@ Respond with ONLY a JSON object:
             prompt_parts.append(f"Relevant information from our database:\n{combined_context}\n")
         
         prompt_parts.append(f"Current user query: {state['user_query']}\n")
+        prompt_parts.append(f"IMPORTANT: The user is communicating in {state['user_language']}. You MUST respond in {state['user_language']} language.")
         prompt_parts.append("Please provide a helpful, friendly response based on the context and conversation history.")
         
         full_message = "\n".join(prompt_parts)
+        
+        logger.info(f"[GENERATION] Responding in language: {state['user_language']}")
         
         try:
             # Get conversation_id
@@ -436,8 +444,23 @@ Respond with ONLY a JSON object:
         return state
     
     def reject_query_node(self, state: ChatbotState) -> ChatbotState:
-        """Reject non-e-commerce queries"""
-        state['final_response'] = self.config.guardrail_config.rejection_message
+        """Reject non-e-commerce queries in the user's language"""
+        try:
+            # Translate rejection message to user's language if not English
+            rejection_message = self.config.guardrail_config.rejection_message
+            
+            if state['user_language'].lower() != 'english':
+                logger.info(f"[REJECT] Translating rejection to {state['user_language']}")
+                prompt = f"Translate this message to {state['user_language']}: {rejection_message}"
+                messages = [{"role": "user", "content": prompt}]
+                translated = self.openai_client.chat(messages, temperature=0.3)
+                state['final_response'] = translated
+            else:
+                state['final_response'] = rejection_message
+        except Exception as e:
+            logger.error(f"[REJECT] Error translating rejection: {str(e)}")
+            state['final_response'] = self.config.guardrail_config.rejection_message
+        
         return state
     
     def route_after_guardrail(self, state: ChatbotState) -> str:
@@ -472,6 +495,7 @@ Respond with ONLY a JSON object:
             "user_query": request.message,
             "user_id": request.user_id,
             "conversation_id": None,
+            "user_language": "English",  # Will be detected in guardrail_check
             "is_ecommerce_query": False,
             "is_followup": False,
             "skip_retrieval": False,
