@@ -77,10 +77,8 @@ I can assist you with:
 - Finding and recommending products
 - Product specifications and details
 - Pricing and promotions
-- Shipping and delivery information
-- Order tracking
-- Returns and refunds
-- Customer reviews
+- Finding experts and consutants
+
 
 How can I help you with your shopping today?"""
 

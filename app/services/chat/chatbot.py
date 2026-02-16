@@ -160,6 +160,7 @@ class ChatbotState(TypedDict):
     user_id: str
     conversation_id: Optional[str]
     user_language: str
+    english_query: str  # Translated query for vector search
     is_ecommerce_query: bool
     is_followup: bool
     skip_retrieval: bool
@@ -278,10 +279,27 @@ Respond with ONLY a JSON object:
             logger.info(f"[GUARDRAIL] Detected language: {state['user_language']}")
             logger.info(f"[GUARDRAIL] is_followup={state['is_followup']}, is_ecommerce={state['is_ecommerce_query']}, skip_retrieval={state['skip_retrieval']}")
             
+            # Translate query to English for vector search if needed
+            if state['user_language'].lower() != 'english':
+                try:
+                    logger.info(f"[GUARDRAIL] Translating query to English for vector search")
+                    translation_prompt = f"Translate this query to English. Only return the translation, nothing else: {state['user_query']}"
+                    translation_messages = [{"role": "user", "content": translation_prompt}]
+                    english_query = self.openai_client.chat(translation_messages, temperature=0.3)
+                    state['english_query'] = english_query.strip()
+                    logger.info(f"[GUARDRAIL] Translated query: {state['english_query']}")
+                except Exception as e:
+                    logger.error(f"[GUARDRAIL] Translation error: {str(e)}")
+                    state['english_query'] = state['user_query']  # Fallback to original
+            else:
+                state['english_query'] = state['user_query']
+                logger.info(f"[GUARDRAIL] Query already in English, no translation needed")
+            
         except Exception as e:
             # On error, default to safe values
             logger.error(f"[GUARDRAIL] Error during classification: {str(e)}")
             state["user_language"] = "English"  # Default to English on error
+            state["english_query"] = state['user_query']
             state["is_followup"] = False
             state["is_ecommerce_query"] = True
             state["skip_retrieval"] = False
@@ -290,8 +308,11 @@ Respond with ONLY a JSON object:
     
     def retrieve_knowledge_node(self, state: ChatbotState) -> ChatbotState:
         """Search vector DBs (products, services, consultations, specialists)"""
-        query = state['user_query']
-        logger.info(f"[RETRIEVAL] Starting knowledge retrieval for query: {query}")
+        # Use English query for vector search (all DB content is in English)
+        query = state['english_query']
+        logger.info(f"[RETRIEVAL] Starting knowledge retrieval")
+        logger.info(f"[RETRIEVAL] Original query: {state['user_query']}")
+        logger.info(f"[RETRIEVAL] English query for vector search: {query}")
         
         try:
             # Products
@@ -496,6 +517,7 @@ Respond with ONLY a JSON object:
             "user_id": request.user_id,
             "conversation_id": None,
             "user_language": "English",  # Will be detected in guardrail_check
+            "english_query": request.message,  # Will be translated if needed
             "is_ecommerce_query": False,
             "is_followup": False,
             "skip_retrieval": False,
