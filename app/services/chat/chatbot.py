@@ -2,13 +2,11 @@ import json
 import requests
 import time
 import logging
-from typing import TypedDict, Annotated, Sequence, Dict, Any, List, Optional
+from typing import TypedDict, Annotated, Sequence, Dict, Any, List
 from operator import add
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-from abacusai import ApiClient
-
 from app.core.config import chatbot_config, settings
 from app.utils.cache_manager import cache_manager
 from app.utils.knowledge.product_knowledge import product_knowledge_manager
@@ -55,110 +53,11 @@ class OpenAIClient:
             raise Exception(f"OpenAI API error: {str(e)}")
 
 
-class AbacusAIClient:
-    """Abacus AI client using official Python SDK"""
-    
-    def __init__(self):
-        self.api_key = settings.ABACUS_API_KEY
-        
-        # Validate credentials
-        if not self.api_key or self.api_key == "your-api-key":
-            logger.error("[ABACUS] Missing or invalid ABACUS_API_KEY")
-            self.client = None
-        else:
-            try:
-                self.client = ApiClient(self.api_key)
-                logger.info("[ABACUS] Successfully initialized Abacus.AI client")
-            except Exception as e:
-                logger.error(f"[ABACUS] Failed to initialize client: {str(e)}")
-                self.client = None
-    
-    def get_conversation_response(self, message: str, conversation_id: Optional[str] = None) -> Dict:
-        """
-        Send message to Abacus AI using evaluate_prompt (no deployment needed)
-        For conversation history, we'll manage it ourselves and include it in the prompt
-        """
-        try:
-            # Validate client
-            if not self.client:
-                logger.error("[ABACUS] Client not initialized - check API key")
-                return {"answer": "", "conversation_id": conversation_id, "success": False, "error": "Abacus client not initialized"}
-            
-            logger.info(f"[ABACUS] Message length: {len(message)} chars")
-            logger.info(f"[ABACUS] Using evaluate_prompt (no deployment required)")
-            
-            # Call Abacus AI using evaluate_prompt
-            # This method doesn't require a deployment ID
-            result = self.client.evaluate_prompt(
-                prompt=message
-            )
-            
-            logger.info(f"[ABACUS] Success - received response")
-            
-            # evaluate_prompt returns a simple response
-            answer = ""
-            if hasattr(result, 'content'):
-                answer = result.content
-            elif hasattr(result, 'response'):
-                answer = result.response
-            elif isinstance(result, str):
-                answer = result
-            else:
-                answer = str(result)
-            
-            logger.info(f"[ABACUS] Response length: {len(answer)} chars")
-            
-            # Since evaluate_prompt doesn't manage conversation IDs,
-            # we return the same conversation_id that was passed in
-            return {
-                "answer": answer,
-                "conversation_id": conversation_id,  # We manage this ourselves
-                "success": True
-            }
-            
-        except Exception as e:
-            logger.error(f"[ABACUS] Error calling evaluate_prompt: {str(e)}")
-            logger.error(f"[ABACUS] Error type: {type(e).__name__}")
-            return {"answer": "", "conversation_id": conversation_id, "success": False, "error": str(e)}
-
-
-
-class SessionManager:
-    """Manages Abacus conversation IDs in Redis"""
-    
-    def __init__(self):
-        self.cache = cache_manager
-    
-    def get_conversation_id(self, user_id: str) -> Optional[str]:
-        """Get Abacus conversation_id from Redis"""
-        if not self.cache.redis_client or not user_id:
-            return None
-        try:
-            key = f"abacus_conversation:{user_id}"
-            conv_id = self.cache.redis_client.get(key)
-            return conv_id.decode('utf-8') if conv_id else None
-        except:
-            return None
-    
-    def set_conversation_id(self, user_id: str, conversation_id: str):
-        """Store Abacus conversation_id in Redis"""
-        if not self.cache.redis_client or not user_id:
-            return
-        try:
-            key = f"abacus_conversation:{user_id}"
-            ttl = settings.ABACUS_CONVERSATION_TTL_DAYS * 24 * 3600
-            self.cache.redis_client.setex(key, ttl, conversation_id)
-        except:
-            pass
-
-
-
 class ChatbotState(TypedDict):
     """LangGraph state"""
     messages: Annotated[Sequence[BaseMessage], add]
     user_query: str
     user_id: str
-    conversation_id: Optional[str]
     user_language: str
     english_query: str  # Translated query for vector search
     is_ecommerce_query: bool
@@ -173,21 +72,17 @@ class EcommerceChatbotAgent:
     LangGraph E-commerce Chatbot
     
     - OpenAI for guardrails AND follow-up detection (single call)
-    - Abacus AI for responses (main LLM)
+    - ChatGPT for responses (main LLM)
     - Smart routing based on LLM classification
     """
     
     def __init__(self):
         self.config = chatbot_config
         
-        # OpenAI for guardrails + follow-up detection
+        # OpenAI for guardrails, follow-up detection, and responses
         self.openai_client = OpenAIClient()
         
-        # Abacus AI for responses
-        self.abacus = AbacusAIClient()
-        
         # Helpers
-        self.session_mgr = SessionManager()
         self.cache = cache_manager
         
         # Build graph
@@ -392,9 +287,7 @@ Respond with ONLY a JSON object:
     
     def generate_response_node(self, state: ChatbotState) -> ChatbotState:
         """
-        Generate response using Abacus AI
-        Since evaluate_prompt doesn't manage conversation history automatically,
-        we need to include recent history in the prompt
+        Generate response using OpenAI ChatGPT with conversation context and knowledge snippets.
         """
         logger.info(f"[GENERATION] Starting response generation")
         
@@ -407,7 +300,7 @@ Respond with ONLY a JSON object:
         combined_context = "\n\n".join(context_parts) if context_parts else ""
         logger.info(f"[GENERATION] Context length: {len(combined_context)} chars, {len(context_parts)} sources")
         
-        # Get conversation history for context (since evaluate_prompt doesn't manage it)
+        # Get conversation history for context
         conversation_history = ""
         recent_history = self.cache.get_history(state['user_id'])
         if recent_history and len(recent_history) > 0:
@@ -419,44 +312,33 @@ Respond with ONLY a JSON object:
             conversation_history = "\n".join(history_lines)
             logger.info(f"[GENERATION] Including {len(recent_history)} previous exchanges in context")
         
-        # Build comprehensive prompt with history and context
-        prompt_parts = []
+        # Build prompts
+        system_prompt = self.config.response_config.system_prompt.format(
+            context=combined_context if combined_context else "No additional context available.",
+            query=state['user_query']
+        )
         
+        user_prompt_parts = []
         if conversation_history:
-            prompt_parts.append(f"Previous conversation:\n{conversation_history}\n")
-        
+            user_prompt_parts.append(f"Previous conversation:\n{conversation_history}\n")
         if combined_context:
-            prompt_parts.append(f"Relevant information from our database:\n{combined_context}\n")
+            user_prompt_parts.append(f"Relevant information from our database:\n{combined_context}\n")
+        user_prompt_parts.append(f"Respond in {state['user_language']} to this user query: {state['user_query']}")
+        user_prompt_parts.append("Provide a concise, friendly answer based on the context above.")
+        user_prompt = "\n".join(user_prompt_parts)
         
-        prompt_parts.append(f"Current user query: {state['user_query']}\n")
-        prompt_parts.append(f"IMPORTANT: The user is communicating in {state['user_language']}. You MUST respond in {state['user_language']} language.")
-        prompt_parts.append("Please provide a helpful, friendly response based on the context and conversation history.")
-        
-        full_message = "\n".join(prompt_parts)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
         logger.info(f"[GENERATION] Responding in language: {state['user_language']}")
         
         try:
-            # Get conversation_id
-            conversation_id = self.session_mgr.get_conversation_id(state['user_id'])
-            logger.info(f"[GENERATION] Conversation ID: {conversation_id if conversation_id else 'None (new conversation)'}")
-            
-            # Call Abacus AI
-            logger.info(f"[GENERATION] Calling Abacus AI...")
-            result = self.abacus.get_conversation_response(full_message, conversation_id)
-            
-            if result['success']:
-                state['final_response'] = result['answer']
-                logger.info(f"[GENERATION] Successfully generated response (length: {len(result['answer'])} chars)")
-                # Store new conversation_id
-                if result['conversation_id']:
-                    self.session_mgr.set_conversation_id(state['user_id'], result['conversation_id'])
-                    logger.info(f"[GENERATION] Updated conversation ID: {result['conversation_id']}")
-            else:
-                logger.error(f"[GENERATION] Abacus AI call failed: {result.get('error')}")
-                state['final_response'] = "I apologize, but I encountered an error. Please try again."
-                state['metadata']['error'] = result.get('error')
-        
+            logger.info(f"[GENERATION] Calling OpenAI ChatGPT...")
+            answer = self.openai_client.chat(messages, temperature=self.config.response_config.temperature)
+            state['final_response'] = answer
+            logger.info(f"[GENERATION] Successfully generated response (length: {len(answer)} chars)")
         except Exception as e:
             logger.error(f"[GENERATION] Exception during response generation: {str(e)}")
             state['final_response'] = "I apologize, but I encountered an error. Please try again."
@@ -503,7 +385,7 @@ Respond with ONLY a JSON object:
         
         History is managed server-side:
         - Redis provides recent history for guardrail/follow-up detection
-        - Abacus AI maintains full conversation via conversation_id
+        - ChatGPT responses are conditioned on cached history and retrieved knowledge
         """
         logger.info(f"\n{'='*80}")
         logger.info(f"[CHAT] New chat request from user: {request.user_id}")
@@ -512,10 +394,9 @@ Respond with ONLY a JSON object:
         
         # Initialize state (no history from request needed)
         initial_state: ChatbotState = {
-            "messages": [],  # Not used since Abacus handles history
+            "messages": [],  # Not used since ChatGPT relies on cached history
             "user_query": request.message,
             "user_id": request.user_id,
-            "conversation_id": None,
             "user_language": "English",  # Will be detected in guardrail_check
             "english_query": request.message,  # Will be translated if needed
             "is_ecommerce_query": False,

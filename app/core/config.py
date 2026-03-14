@@ -22,10 +22,6 @@ class Settings:
         # OpenAI Configuration
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         
-        # Abacus AI Configuration
-        self.ABACUS_API_KEY = os.getenv("ABACUS_API_KEY")
-        self.ABACUS_CONVERSATION_TTL_DAYS = int(os.getenv("ABACUS_CONVERSATION_TTL_DAYS", "7"))
-        
         # Redis Configuration
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.REDIS_DB = int(os.getenv("REDIS_DB", "0"))

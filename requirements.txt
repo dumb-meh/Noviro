@@ -13,5 +13,4 @@ chromadb>=0.4.24
 redis>=5.0.0
 langgraph>=0.0.40
 langchain-core>=0.1.0
-abacusai
 openai
